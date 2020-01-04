@@ -1,0 +1,41 @@
+FROM mcr.microsoft.com/powershell:7.0.0-rc.1-nanoserver-1903 AS installer
+
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+RUN Get-Host | Select-Object Version
+
+# Retrieve .NET Core SDK
+RUN $dotnet_sdk_version = '3.1.100'; `
+    Invoke-WebRequest -OutFile dotnet.zip https://dotnetcli.azureedge.net/dotnet/Sdk/$dotnet_sdk_version/dotnet-sdk-$dotnet_sdk_version-win-x64.zip; `
+    $dotnet_sha512 = '94ee575d6104058cdd31370fc686b5d1aa23bf4a54611843c1f93afc82cad3523217b5f2eaddd4b5c136bca252d2c9047092f7054052c8683fa0f363ca28ad11'; `
+    if ((Get-FileHash dotnet.zip -Algorithm sha512).Hash -ne $dotnet_sha512) { `
+        Write-Host 'CHECKSUM VERIFICATION FAILED!'; `
+        exit 1; `
+    }; `
+    `
+    Expand-Archive dotnet.zip -DestinationPath dotnet; `
+    Remove-Item -Force dotnet.zip
+
+# SDK image
+FROM mcr.microsoft.com/dotnet/framework/aspnet:4.8-windowsservercore-1903
+
+# Enable detection of running in a container
+ENV DOTNET_RUNNING_IN_CONTAINER true
+# Enable correct mode for dotnet watch (only mode supported in a container)
+ENV DOTNET_USE_POLLING_FILE_WATCHER true
+# Skip extraction of XML docs - generally not useful within an image/container - helps performance
+ENV NUGET_XMLDOC_MODE skip
+# PowerShell telemetry for docker image usage
+ENV POWERSHELL_DISTRIBUTION_CHANNEL PSDocker-DotnetCoreSDK-NanoServer-1903
+
+# In order to set system PATH, ContainerAdministrator must be used
+USER ContainerAdministrator
+RUN setx /M PATH "%PATH%;C:\Program Files\dotnet;C:\Program Files\powershell"
+USER ContainerUser
+
+COPY --from=installer ["/dotnet", "/Program Files/dotnet"]
+
+COPY --from=installer ["/powershell", "/Program Files/powershell"]
+
+# Trigger first run experience by running arbitrary cmd
+RUN dotnet help
